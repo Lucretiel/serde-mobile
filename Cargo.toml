@@ -1,0 +1,20 @@
+[package]
+name = "serde-mobile"
+version = "1.0.0"
+edition = "2021"
+authors = ["Nathan West <Lucretiel@gmail.com>"]
+
+readme = "README.md"
+license = "MPL-2.0"
+description = "Move-oriented sequence and map access types for serde deserializers"
+repository = "https://github.com/Lucretiel/nom-supreme"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0.136", default-features = false }
+
+[dev-dependencies]
+anyhow = "1.0.56"
+serde = { version = "1.0.136", features = ["std", "derive"] }
+thiserror = "1.0.30"
