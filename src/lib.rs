@@ -466,7 +466,6 @@ where
 impl<'de, A> de::MapAccess<'de> for AccessAdapter<A, A::Value>
 where
     A: MapKeyAccess<'de>,
-    A::Value: MapValueAccess<'de, Error = A::Error, Key = A>,
 {
     type Error = A::Error;
 
