@@ -280,7 +280,7 @@ pub trait MapKeyAccess<'de>: Sized {
         self,
         kseed: K,
         vseed: V,
-    ) -> Result<Option<((K::Value, V::Value), Self)>, Self::Error>
+    ) -> Result<Option<((K::Value, V::Value), Option<Self>)>, Self::Error>
     where
         K: de::DeserializeSeed<'de>,
         V: de::DeserializeSeed<'de>,
@@ -302,9 +302,7 @@ pub trait MapKeyAccess<'de>: Sized {
     */
     #[inline]
     #[allow(clippy::type_complexity)]
-    fn next_entry<K, V>(
-        self,
-    ) -> Result<Option<((K, V), <Self::Value as MapValueAccess<'de>>::Key)>, Self::Error>
+    fn next_entry<K, V>(self) -> Result<Option<((K, V), Option<Self>)>, Self::Error>
     where
         K: de::Deserialize<'de>,
         V: de::Deserialize<'de>,
@@ -350,23 +348,25 @@ pub trait MapValueAccess<'de>: Sized {
 
     /**
     This returns the next `value` from the map, associated with the
-    previously accessed key. It additionally returns a `key_access` object
-    which can be used to retrieve additional keys from the map.
+    previously accessed key. It additionally returns an optional `key_access`
+    object which can be used to retrieve additional keys from the map, if any.
 
     The seed allows for passing data into a `Deserialize` implementation
     at runtime; typically it makes more sense to call [`next_value`][Self::next_value].
     */
-    fn next_value_seed<S>(self, seed: S) -> Result<(S::Value, Self::Key), Self::Error>
+
+    #[allow(clippy::type_complexity)]
+    fn next_value_seed<S>(self, seed: S) -> Result<(S::Value, Option<Self::Key>), Self::Error>
     where
         S: de::DeserializeSeed<'de>;
 
     /**
     This returns the next `value` from the map, associated with the
-    previously accessed key. It additionally returns a `key_access` object
-    which can be used to retrieve additional keys from the map.
+    previously accessed key. It additionally returns an optional `key_access`
+    object which can be used to retrieve additional keys from the map, if any.
     */
     #[inline]
-    fn next_value<T>(self) -> Result<(T, Self::Key), Self::Error>
+    fn next_value<T>(self) -> Result<(T, Option<Self::Key>), Self::Error>
     where
         T: de::Deserialize<'de>,
     {
@@ -495,7 +495,9 @@ where
             AccessAdapterState::Ready(_access) => panic!("called next_value_seed out of order"),
             AccessAdapterState::Value(access) => {
                 access.next_value_seed(seed).map(|(value, key_access)| {
-                    self.state = AccessAdapterState::Ready(key_access);
+                    if let Some(key_access) = key_access {
+                        self.state = AccessAdapterState::Ready(key_access)
+                    }
                     value
                 })
             }
@@ -515,7 +517,9 @@ where
         match self.state.take() {
             AccessAdapterState::Ready(access) => access.next_entry_seed(key, value).map(|opt| {
                 opt.map(|(entry, access)| {
-                    self.state = AccessAdapterState::Ready(access);
+                    if let Some(access) = access {
+                        self.state = AccessAdapterState::Ready(access)
+                    }
                     entry
                 })
             }),
@@ -559,12 +563,12 @@ where
     type Error = V::Error;
     type Key = K;
 
-    fn next_value_seed<S>(self, seed: S) -> Result<(S::Value, Self::Key), Self::Error>
+    fn next_value_seed<S>(self, seed: S) -> Result<(S::Value, Option<Self::Key>), Self::Error>
     where
         S: de::DeserializeSeed<'de>,
     {
         seed.deserialize(self.value)
-            .map(|value| (value, self.parent))
+            .map(|value| (value, Some(self.parent)))
     }
 
     fn size_hint(&self) -> Option<usize> {

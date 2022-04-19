@@ -270,12 +270,12 @@ where
 
     type Key = RowMapKeyAccess<'k, I>;
 
-    fn next_value_seed<S>(self, seed: S) -> Result<(S::Value, Self::Key), Self::Error>
+    fn next_value_seed<S>(self, seed: S) -> Result<(S::Value, Option<Self::Key>), Self::Error>
     where
         S: de::DeserializeSeed<'de>,
     {
         seed.deserialize(self.value.into_deserializer())
-            .map(|value| (value, self.key_access))
+            .map(|value| (value, Some(self.key_access)))
     }
 }
 
