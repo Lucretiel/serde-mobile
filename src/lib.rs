@@ -386,7 +386,7 @@ pub trait MapValueAccess<'de>: Sized {
 
 /**
 Adapter type for converting the `serde-mobile` traits into serde's `&mut self`
-oriented traits. It uses an internal enum to track the state of the accessors.
+oriented traits. It uses an enum to track the state of the accessors.
 
 Because the underlying traits use a move-oriented interface to prevent calls
 after returning `None`, this object is guaranteed to be "fused", meaning that
@@ -397,24 +397,41 @@ This type can be used for both [`serde::de::SeqAccess`] and
 [`serde::de::MapAccess`].
 */
 #[derive(Debug, Clone)]
-pub struct AccessAdapter<K, V> {
-    state: AccessAdapterState<K, V>,
-}
+pub enum AccessAdapter<T, V> {
+    /**
+    The `AccessAdapter` is ready to yield the next value from `K`. This is
+    the next `element` for `SeqAccess` or the next `key` for a `MapAccess`.
+    */
+    Ready(T),
 
-#[derive(Debug, Clone)]
-enum AccessAdapterState<K, V> {
-    Ready(K),
+    /**
+    The `AccessAdapter` is ready to yield the `value` associated with a
+    recently yielded `key` for a `MapAccess`. `SeqAccess` adapters can never
+    be in this state.
+    */
     Value(V),
-    Dead,
+
+    /**
+    The `AccessAdapter` is empty; no more items will be yielded from it.
+    */
+    Done,
 }
 
-impl<K, V> AccessAdapterState<K, V> {
-    fn take(&mut self) -> Self {
-        mem::replace(self, AccessAdapterState::Dead)
-    }
-}
+/**
+A [`SeqAccessAdapter`] is an [`AccessAdapter`] used as a [`de::SeqAccess`].
+It can never be in the [`Value`][AccessAdapter::Value] state.
+*/
+pub type SeqAccessAdapter<T> = AccessAdapter<T, Infallible>;
 
 impl<T, V> AccessAdapter<T, V> {
+    /**
+    Replace `self` with [`Done`][AccessAdapter::Done] and return the
+    original state.
+    */
+    fn take(&mut self) -> Self {
+        mem::replace(self, AccessAdapter::Done)
+    }
+
     /**
     Create a new `AccessAdapter`, suitable for use as the argument to
     [`visit_seq`][de::Visitor::visit_seq] or [`visit_map`][de::Visitor::visit_map].
@@ -422,9 +439,7 @@ impl<T, V> AccessAdapter<T, V> {
     respectively.
     */
     pub fn new(access: T) -> Self {
-        Self {
-            state: AccessAdapterState::Ready(access),
-        }
+        Self::Ready(access)
     }
 }
 
@@ -442,23 +457,23 @@ where
     where
         T: de::DeserializeSeed<'de>,
     {
-        match self.state.take() {
-            AccessAdapterState::Ready(seq) => seq.next_element_seed(seed).map(|opt| {
+        match self.take() {
+            AccessAdapter::Ready(seq) => seq.next_element_seed(seed).map(|opt| {
                 opt.map(|(value, seq)| {
-                    self.state = AccessAdapterState::Ready(seq);
+                    *self = AccessAdapter::Ready(seq);
                     value
                 })
             }),
-            AccessAdapterState::Value(inf) => match inf {},
-            AccessAdapterState::Dead => Ok(None),
+            AccessAdapter::Value(inf) => match inf {},
+            AccessAdapter::Done => Ok(None),
         }
     }
 
     fn size_hint(&self) -> Option<usize> {
-        match self.state {
-            AccessAdapterState::Ready(ref seq) => seq.size_hint(),
-            AccessAdapterState::Value(inf) => match inf {},
-            AccessAdapterState::Dead => Some(0),
+        match *self {
+            AccessAdapter::Ready(ref seq) => seq.size_hint(),
+            AccessAdapter::Value(inf) => match inf {},
+            AccessAdapter::Done => Some(0),
         }
     }
 }
@@ -474,15 +489,15 @@ where
     where
         S: de::DeserializeSeed<'de>,
     {
-        match self.state.take() {
-            AccessAdapterState::Ready(access) => access.next_key_seed(seed).map(|opt| {
+        match self.take() {
+            AccessAdapter::Ready(access) => access.next_key_seed(seed).map(|opt| {
                 opt.map(|(key, value_access)| {
-                    self.state = AccessAdapterState::Value(value_access);
+                    *self = AccessAdapter::Value(value_access);
                     key
                 })
             }),
-            AccessAdapterState::Value(_access) => panic!("called next_key_seed out of order"),
-            AccessAdapterState::Dead => Ok(None),
+            AccessAdapter::Value(_access) => panic!("called next_key_seed out of order"),
+            AccessAdapter::Done => Ok(None),
         }
     }
 
@@ -491,17 +506,17 @@ where
     where
         S: de::DeserializeSeed<'de>,
     {
-        match self.state.take() {
-            AccessAdapterState::Ready(_access) => panic!("called next_value_seed out of order"),
-            AccessAdapterState::Value(access) => {
+        match self.take() {
+            AccessAdapter::Ready(_access) => panic!("called next_value_seed out of order"),
+            AccessAdapter::Value(access) => {
                 access.next_value_seed(seed).map(|(value, key_access)| {
                     if let Some(key_access) = key_access {
-                        self.state = AccessAdapterState::Ready(key_access)
+                        *self = AccessAdapter::Ready(key_access)
                     }
                     value
                 })
             }
-            AccessAdapterState::Dead => panic!("called next_value_seed out of order"),
+            AccessAdapter::Done => panic!("called next_value_seed out of order"),
         }
     }
 
@@ -514,26 +529,26 @@ where
         K: de::DeserializeSeed<'de>,
         V: de::DeserializeSeed<'de>,
     {
-        match self.state.take() {
-            AccessAdapterState::Ready(access) => access.next_entry_seed(key, value).map(|opt| {
+        match self.take() {
+            AccessAdapter::Ready(access) => access.next_entry_seed(key, value).map(|opt| {
                 opt.map(|(entry, access)| {
                     if let Some(access) = access {
-                        self.state = AccessAdapterState::Ready(access)
+                        *self = AccessAdapter::Ready(access)
                     }
                     entry
                 })
             }),
-            AccessAdapterState::Value(_access) => panic!("called next_entry_seed out of order"),
-            AccessAdapterState::Dead => Ok(None),
+            AccessAdapter::Value(_access) => panic!("called next_entry_seed out of order"),
+            AccessAdapter::Done => Ok(None),
         }
     }
 
     #[inline]
     fn size_hint(&self) -> Option<usize> {
-        match self.state {
-            AccessAdapterState::Ready(ref access) => access.size_hint(),
-            AccessAdapterState::Value(ref access) => access.size_hint(),
-            AccessAdapterState::Dead => Some(0),
+        match *self {
+            AccessAdapter::Ready(ref access) => access.size_hint(),
+            AccessAdapter::Value(ref access) => access.size_hint(),
+            AccessAdapter::Done => Some(0),
         }
     }
 }
